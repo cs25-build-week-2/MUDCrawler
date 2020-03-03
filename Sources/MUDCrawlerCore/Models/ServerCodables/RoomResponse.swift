@@ -7,8 +7,11 @@
 
 import Foundation
 
-struct RoomResponse: Codable {
-	let roomID: Int
+struct RoomResponse: ServerResponse {
+	let roomId: Int
+	var roomID: Int {
+		roomId
+	}
 	let title: String
 	let description: String
 	let coordinates: RoomLocation
@@ -22,7 +25,7 @@ struct RoomResponse: Codable {
 	let messages: [String]
 
 	enum CodingKeys: String, CodingKey {
-		case roomID = "room_id"
+		case roomId
 		case title
 		case description
 		case coordinates

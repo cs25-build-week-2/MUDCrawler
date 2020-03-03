@@ -28,6 +28,7 @@ class RoomController {
 		commandQueue.start()
 	}
 
+	// MARK: - API Directives
 	/// adds an init command to the queue and waits for the cooldown to finish
 	func initPlayer(completion: ((Result<RoomResponse, NetworkError>) -> Void)? = nil) {
 		commandQueue.addCommand { dateCompletion in
@@ -40,13 +41,53 @@ class RoomController {
 					print(roomInfo)
 				case .failure(let error):
 					print("Error initing player: \(error)")
-					cdTime = Date()
+					cdTime = self.cooldownFromError(error)
 				}
 				dateCompletion(cdTime)
 			}
 		}
 		waitForCommandQueue()
 	}
+
+	func warp() {
+		commandQueue.addCommand { dateCompletion in
+			self.apiConnection.warp { result in
+				let cdTime: Date
+				switch result {
+				case .success(let roomInfo):
+					cdTime = self.dateFromCooldownValue(roomInfo.cooldown)
+					self.logRoomInfo(roomInfo, movedInDirection: nil)
+					print(roomInfo)
+				case .failure(let error):
+					print("Error initing player: \(error)")
+					cdTime = self.cooldownFromError(error)
+				}
+				dateCompletion(cdTime)
+			}
+		}
+		waitForCommandQueue()
+	}
+
+	func recall() {
+		commandQueue.addCommand { dateCompletion in
+			self.apiConnection.recall { result in
+				let cdTime: Date
+				switch result {
+				case .success(let roomInfo):
+					cdTime = self.dateFromCooldownValue(roomInfo.cooldown)
+					self.logRoomInfo(roomInfo, movedInDirection: nil)
+					print(roomInfo)
+				case .failure(let error):
+					print("Error initing player: \(error)")
+					cdTime = self.cooldownFromError(error)
+				}
+				dateCompletion(cdTime)
+			}
+		}
+		waitForCommandQueue()
+	}
+
+
 
 	/// adds a move command to the queue and waits for the cooldown to finish
 	func move(in direction: Direction, completion: ((Result<RoomResponse, NetworkError>) -> Void)? = nil) {
@@ -69,7 +110,37 @@ class RoomController {
 					print(roomInfo)
 				case .failure(let error):
 					print("Error moving rooms: \(error)")
-					cdTime = Date()
+					cdTime = self.cooldownFromError(error)
+				}
+				dateCompletion(cdTime)
+				completion?(result)
+			}
+		}
+
+		waitForCommandQueue()
+	}
+
+	func fly(in direction: Direction, completion: ((Result<RoomResponse, NetworkError>) -> Void)? = nil) {
+		guard let currentRoom = currentRoom else { return }
+
+		let nextRoomID: String?
+		if let nextID = rooms[currentRoom]?.connections[direction] {
+			nextRoomID = "\(nextID)"
+		} else {
+			nextRoomID = nil
+		}
+
+		commandQueue.addCommand { dateCompletion in
+			self.apiConnection.fly(direction: direction, predictedRoom: nextRoomID) { result in
+				let cdTime: Date
+				switch result {
+				case .success(let roomInfo):
+					cdTime = self.dateFromCooldownValue(roomInfo.cooldown)
+					self.logRoomInfo(roomInfo, movedInDirection: direction)
+					print(roomInfo)
+				case .failure(let error):
+					print("Error moving rooms: \(error)")
+					cdTime = self.cooldownFromError(error)
 				}
 				dateCompletion(cdTime)
 				completion?(result)
@@ -84,34 +155,408 @@ class RoomController {
 		guard rooms[roomID] != nil else { throw RoomControllerError.roomDoesntExist(roomID: roomID) }
 
 		let path = try shortestRoute(from: currentRoom, to: roomID)
+		let movements = path.poweredUp(rooms: rooms)
 
-		for step in path {
-			let direction = step.direction
-			let room = step.roomID
-			commandQueue.addCommand { dateCompletion in
-				self.apiConnection.movePlayer(direction: direction, predictedRoom: "\(room)") { result in
-					let cdTime: Date
-					switch result {
-					case .success(let roomInfo):
-						if quietly {
-							print("Entered room \(roomInfo.roomID)")
-						} else {
-							print(roomInfo)
+		for step in movements {
+			switch step {
+			case .dash(direction: let direction, roomIDs: let roomIDs):
+				commandQueue.addCommand { dateCompletion in
+					self.apiConnection.dashPlayer(direction: direction, predictedRooms: roomIDs) { result in
+						let cdTime: Date
+						switch result {
+						case .success(let roomInfo):
+							if quietly {
+								print("Entered room \(roomInfo.roomID)")
+							} else {
+								print(roomInfo)
+							}
+							self.logRoomInfo(roomInfo, movedInDirection: direction, dashed: true)
+							cdTime = self.dateFromCooldownValue(roomInfo.cooldown)
+						case .failure(let error):
+							print("Error moving player: \(error)")
+							cdTime = self.cooldownFromError(error)
 						}
-						self.logRoomInfo(roomInfo, movedInDirection: direction)
-						cdTime = self.dateFromCooldownValue(roomInfo.cooldown)
-					case .failure(let error):
-						print("Error moving player: \(error)")
-						cdTime = Date()
+						dateCompletion(cdTime)
 					}
-					dateCompletion(cdTime)
+				}
+			case .fly(direction: let direction, roomID: let roomID):
+				commandQueue.addCommand { dateCompletion in
+					self.apiConnection.fly(direction: direction, predictedRoom: "\(roomID)") { result in
+						let cdTime: Date
+						switch result {
+						case .success(let roomInfo):
+							if quietly {
+								print("Entered room \(roomInfo.roomID)")
+							} else {
+								print(roomInfo)
+							}
+							self.logRoomInfo(roomInfo, movedInDirection: direction)
+							cdTime = self.dateFromCooldownValue(roomInfo.cooldown)
+						case .failure(let error):
+							print("Error moving player: \(error)")
+							cdTime = self.cooldownFromError(error)
+						}
+						dateCompletion(cdTime)
+					}
+				}
+			case .move(direction: let direction, roomID: let roomID):
+				commandQueue.addCommand { dateCompletion in
+					self.apiConnection.movePlayer(direction: direction, predictedRoom: "\(roomID)") { result in
+						let cdTime: Date
+						switch result {
+						case .success(let roomInfo):
+							if quietly {
+								print("Entered room \(roomInfo.roomID)")
+							} else {
+								print(roomInfo)
+							}
+							self.logRoomInfo(roomInfo, movedInDirection: direction)
+							cdTime = self.dateFromCooldownValue(roomInfo.cooldown)
+						case .failure(let error):
+							print("Error moving player: \(error)")
+							cdTime = self.cooldownFromError(error)
+						}
+						dateCompletion(cdTime)
+					}
 				}
 			}
-			print("Added \(direction) to \(room) to queue.")
+			print("Added \(step) to queue.")
 		}
 		waitForCommandQueue()
 	}
 
+	func take(item: String) {
+		guard currentRoom != nil else { return }
+		commandQueue.addCommand { dateCompletion in
+			self.apiConnection.takeItem(item) { result in
+				let cdTime: Date
+				switch result {
+				case .success(let roomInfo):
+					cdTime = self.dateFromCooldownValue(roomInfo.cooldown)
+					self.logRoomInfo(roomInfo, movedInDirection: nil)
+					print(roomInfo)
+				case .failure(let error):
+					print("Error taking item: \(error)")
+					cdTime = self.cooldownFromError(error)
+				}
+				dateCompletion(cdTime)
+			}
+		}
+		waitForCommandQueue()
+	}
+
+	func drop(item: String) {
+		guard currentRoom != nil else { return }
+		commandQueue.addCommand { dateCompletion in
+			self.apiConnection.dropItem(item) { result in
+				let cdTime: Date
+				switch result {
+				case .success(let roomInfo):
+					cdTime = self.dateFromCooldownValue(roomInfo.cooldown)
+					self.logRoomInfo(roomInfo, movedInDirection: nil)
+					print(roomInfo)
+				case .failure(let error):
+					print("Error taking item: \(error)")
+					cdTime = self.cooldownFromError(error)
+				}
+				dateCompletion(cdTime)
+			}
+		}
+		waitForCommandQueue()
+	}
+
+	func sell(item: String, confirm: Bool) {
+		guard currentRoom != nil else { return }
+		commandQueue.addCommand { dateCompletion in
+			self.apiConnection.sellItem(item, confirm: confirm) { result in
+				let cdTime: Date
+				switch result {
+				case .success(let roomInfo):
+					cdTime = self.dateFromCooldownValue(roomInfo.cooldown)
+					self.logRoomInfo(roomInfo, movedInDirection: nil)
+					print(roomInfo)
+				case .failure(let error):
+					print("Error taking item: \(error)")
+					cdTime = self.cooldownFromError(error)
+				}
+				dateCompletion(cdTime)
+			}
+		}
+		waitForCommandQueue()
+	}
+
+	func examine(entity: String) {
+		guard currentRoom != nil else { return }
+		commandQueue.addCommand { dateCompletion in
+			self.apiConnection.examine(entity: entity) { result in
+				let cdTime: Date
+				switch result {
+				case .success(let examineResponse):
+					cdTime = self.dateFromCooldownValue(examineResponse.cooldown)
+					print(examineResponse)
+					if let id = self.getRoomID(from: examineResponse.description) {
+						print("Mine in room \(id)")
+					}
+				case .failure(let error):
+					print("Error taking item: \(error)")
+					cdTime = self.cooldownFromError(error)
+				}
+				dateCompletion(cdTime)
+			}
+		}
+		waitForCommandQueue()
+	}
+
+	func getRoomID(from description: String) -> Int? {
+		let values = description.split(separator: "\n").map { String($0) }
+		let ints = values.map { UInt8($0, radix: 2) }.compactMap { $0 }
+		let chars = ints.filter { $0 > 47 && $0 < 58 }.compactMap { Unicode.Scalar($0) }.compactMap { Character($0) }
+		let str = String(chars)
+		return Int(str)
+	}
+
+	func playerStatus() {
+		guard currentRoom != nil else { return }
+		commandQueue.addCommand { dateCompletion in
+			self.apiConnection.playerStatus { result in
+				let cdTime: Date
+				switch result {
+				case .success(let playerInfo):
+					cdTime = self.dateFromCooldownValue(playerInfo.cooldown)
+					print(playerInfo)
+				case .failure(let error):
+					print("Error taking item: \(error)")
+					cdTime = self.cooldownFromError(error)
+				}
+				dateCompletion(cdTime)
+			}
+		}
+		waitForCommandQueue()
+	}
+
+	func equip(item: String) {
+		guard currentRoom != nil else { return }
+		commandQueue.addCommand { dateCompletion in
+			self.apiConnection.equip(item: item) { result in
+				let cdTime: Date
+				switch result {
+				case .success(let playerInfo):
+					cdTime = self.dateFromCooldownValue(playerInfo.cooldown)
+					print(playerInfo)
+				case .failure(let error):
+					print("Error taking item: \(error)")
+					cdTime = self.cooldownFromError(error)
+				}
+				dateCompletion(cdTime)
+			}
+		}
+		waitForCommandQueue()
+	}
+
+	func unequip(item: String) {
+		guard currentRoom != nil else { return }
+		commandQueue.addCommand { dateCompletion in
+			self.apiConnection.unequip(item: item) { result in
+				let cdTime: Date
+				switch result {
+				case .success(let playerInfo):
+					cdTime = self.dateFromCooldownValue(playerInfo.cooldown)
+					print(playerInfo)
+				case .failure(let error):
+					print("Error taking item: \(error)")
+					cdTime = self.cooldownFromError(error)
+				}
+				dateCompletion(cdTime)
+			}
+		}
+		waitForCommandQueue()
+	}
+
+	func changeName(to name: String, confirm: Bool) {
+		guard currentRoom != nil else { return }
+		commandQueue.addCommand { dateCompletion in
+			self.apiConnection.changeName(newName: name, confirm: confirm) { result in
+				let cdTime: Date
+				switch result {
+				case .success(let roomInfo):
+					cdTime = self.dateFromCooldownValue(roomInfo.cooldown)
+					print(roomInfo)
+				case .failure(let error):
+					print("Error taking item: \(error)")
+					cdTime = self.cooldownFromError(error)
+				}
+				dateCompletion(cdTime)
+			}
+		}
+		waitForCommandQueue()
+	}
+
+	func pray() {
+		guard currentRoom != nil else { return }
+		commandQueue.addCommand { dateCompletion in
+			self.apiConnection.pray { result in
+				let cdTime: Date
+				switch result {
+				case .success(let roomInfo):
+					cdTime = self.dateFromCooldownValue(roomInfo.cooldown)
+					print(roomInfo)
+				case .failure(let error):
+					print("Error taking item: \(error)")
+					cdTime = self.cooldownFromError(error)
+				}
+				dateCompletion(cdTime)
+			}
+		}
+		waitForCommandQueue()
+	}
+
+	func ghostCarry(item: String) {
+		guard currentRoom != nil else { return }
+		commandQueue.addCommand { dateCompletion in
+			self.apiConnection.ghostCarry(item: item) { result in
+				let cdTime: Date
+				switch result {
+				case .success(let playerResponse):
+					cdTime = self.dateFromCooldownValue(playerResponse.cooldown)
+					print(playerResponse)
+				case .failure(let error):
+					print("Error taking item: \(error)")
+					cdTime = self.cooldownFromError(error)
+				}
+				dateCompletion(cdTime)
+			}
+		}
+		waitForCommandQueue()
+	}
+
+	func ghostReceive(item: String) {
+		guard currentRoom != nil else { return }
+		commandQueue.addCommand { dateCompletion in
+			self.apiConnection.ghostReceive(item: item) { result in
+				let cdTime: Date
+				switch result {
+				case .success(let playerResponse):
+					cdTime = self.dateFromCooldownValue(playerResponse.cooldown)
+					print(playerResponse)
+				case .failure(let error):
+					print("Error taking item: \(error)")
+					cdTime = self.cooldownFromError(error)
+				}
+				dateCompletion(cdTime)
+			}
+		}
+		waitForCommandQueue()
+	}
+
+	func transmog(item: String) {
+		guard currentRoom != nil else { return }
+		commandQueue.addCommand { dateCompletion in
+			self.apiConnection.transmog(item: item) { result in
+				let cdTime: Date
+				switch result {
+				case .success(let playerResponse):
+					cdTime = self.dateFromCooldownValue(playerResponse.cooldown)
+					print(playerResponse)
+				case .failure(let error):
+					print("Error taking item: \(error)")
+					cdTime = self.cooldownFromError(error)
+				}
+				dateCompletion(cdTime)
+			}
+		}
+		waitForCommandQueue()
+	}
+
+	func foundItems() {
+		print("Note, these may have been picked up!")
+		let roomsWithItems = rooms.filter { ($0.value.items?.count ?? 0) > 0 }
+		roomsWithItems.forEach { print("Room \($0.key) has \($0.value.items ?? [])") }
+	}
+
+	// MARK: - Mining
+
+	private var lastProof: LastProof?
+	private var lastProofTime: Date?
+	func getLastProof() {
+		guard currentRoom != nil else { return }
+		commandQueue.addCommand { dateCompletion in
+			self.apiConnection.getLastProof { result in
+				let cdTime: Date
+				switch result {
+				case .success(let lastProof):
+					cdTime = self.dateFromCooldownValue(lastProof.cooldown)
+					self.lastProof = lastProof
+					self.lastProofTime = Date()
+					print(lastProof)
+				case .failure(let error):
+					print("Error taking item: \(error)")
+					cdTime = self.cooldownFromError(error)
+				}
+				dateCompletion(cdTime)
+			}
+		}
+		waitForCommandQueue()
+	}
+
+	func mine() {
+		guard let lastProof = lastProof else { return }
+		let coinminer = CoinMiner(lastProof: lastProof, iterations: 99999)
+
+		var proof: Int?
+
+		while proof == nil {
+			if let lastProofTime = lastProofTime, lastProofTime.addingTimeInterval(10) < Date() {
+				getLastProof()
+				coinminer.lastProof = self.lastProof ?? coinminer.lastProof
+			}
+			DispatchQueue.concurrentPerform(iterations: 4) { _ in
+				print("mining")
+				if let newProof = coinminer.mine() {
+					proof = newProof
+				}
+			}
+		}
+
+		if let newProof = proof {
+			proof = newProof
+			commandQueue.addCommand { dateCompletion in
+				self.apiConnection.submitProof(proof: newProof) { result in
+					let cdTime: Date
+					switch result {
+					case .success(let submissionResult):
+						cdTime = self.dateFromCooldownValue(submissionResult.cooldown)
+						print(submissionResult)
+					case .failure(let error):
+						print("Error taking item: \(error)")
+						cdTime = self.cooldownFromError(error)
+					}
+					dateCompletion(cdTime)
+				}
+			}
+			waitForCommandQueue()
+		}
+	}
+
+	func getBalance() {
+		guard currentRoom != nil else { return }
+		commandQueue.addCommand { dateCompletion in
+			self.apiConnection.getBalance { result in
+				let cdTime: Date
+				switch result {
+				case .success(let balanceInfo):
+					cdTime = self.dateFromCooldownValue(balanceInfo.cooldown)
+					print(balanceInfo)
+				case .failure(let error):
+					print("Error taking item: \(error)")
+					cdTime = self.cooldownFromError(error)
+				}
+				dateCompletion(cdTime)
+			}
+		}
+		waitForCommandQueue()
+	}
+
+	// MARK: - Path calculation
 	/// Performs a breadth first search to get from start to destination
 	func shortestRoute(from startRoomID: Int, to destinationRoomID: Int) throws -> [PathElement<Direction>] {
 		guard rooms[startRoomID] != nil else { throw RoomControllerError.roomDoesntExist(roomID: startRoomID) }
@@ -183,7 +628,7 @@ class RoomController {
 			let pathToNearestUnexplored = try nearestUnexplored(from: currentRoom)
 			if let lastElement = pathToNearestUnexplored.last {
 				print("Room \(lastElement.roomID) still has unexplored rooms. Headed there now!\n\n")
-				try go(to: lastElement.roomID, quietly: true)
+				try go(to: lastElement.roomID, quietly: false)
 				currentRoom = lastElement.roomID
 			}
 
@@ -193,8 +638,14 @@ class RoomController {
 
 			guard let room = rooms[currentRoom] else { return }
 			guard let direction = room.unknownConnections.first else { continue }
-			move(in: direction) { _ in
-				print("Checked out a new room...\n\n")
+			if room.terrain == "CAVE" {
+				move(in: direction) { _ in
+					print("Checked out a new room...\n\n")
+				}
+			} else {
+				fly(in: direction) { _ in
+					print("Checked out a new room...\n\n")
+				}
 			}
 		}
 	}
@@ -226,18 +677,21 @@ class RoomController {
 					dateCompletion(cdTime)
 				}
 			}
-			print("added move to \(nextRoomID)")
+			print("added move to \(nextRoomID ?? "unknown")")
 		}
 		waitForCommandQueue()
 	}
 
-	private func logRoomInfo(_ roomInfo: RoomResponse, movedInDirection direction: Direction?) {
+	// MARK: - logging
+	private func logRoomInfo(_ roomInfo: RoomResponse, movedInDirection direction: Direction?, dashed: Bool = false) {
 		let previousRoomID = currentRoom
 		currentRoom = roomInfo.roomID
 
-		updateMessages(roomInfo.messages, forRoom: roomInfo.roomID)
+		updateRoom(from: roomInfo, room: roomInfo.roomID)
 		if rooms[roomInfo.roomID] == nil {
 			let room = RoomLog(id: roomInfo.roomID,
+							   title: roomInfo.title,
+							   description: roomInfo.description,
 							   location: roomInfo.coordinates,
 							   elevation: roomInfo.elevation,
 							   terrain: roomInfo.terrain,
@@ -251,7 +705,7 @@ class RoomController {
 		}
 		guard let room = rooms[roomInfo.roomID] else { return }
 
-		if let previousRoomID = previousRoomID, let direction = direction {
+		if let previousRoomID = previousRoomID, let direction = direction, !dashed {
 			guard let previousRoom = rooms[previousRoomID] else { fatalError("Previous room: \(previousRoomID) not logged!") }
 			connect(previousRoom: previousRoom, newRoom: room, direction: direction)
 		}
@@ -263,7 +717,21 @@ class RoomController {
 		rooms[roomID]?.messages.formUnion(newMessages)
 	}
 
+	private func updateRoom(from info: RoomResponse, room: Int) {
+		updateMessages(info.messages, forRoom: room)
+		rooms[room]?.title = info.title
+		rooms[room]?.description = info.description
+		rooms[room]?.items = info.items
+		if (info.items?.count ?? 0) > 0 {
+			print("Room: \(room) items: \(info.items ?? [])")
+		}
+		if (info.players?.count ?? 0) > 0 {
+			print("Room: \(room) players: \(info.players ?? [])")
+		}
+	}
+
 	private func connect(previousRoom: RoomLog, newRoom: RoomLog, direction: Direction) {
+		guard previousRoom != newRoom else { return }
 		// double check direction and positions match (this might not be necessary, but just verifying)
 		switch direction {
 		case .north:
@@ -298,21 +766,23 @@ class RoomController {
 			RoomLocation(x: max($0.x, $1.value.location.x), y: max($0.y, $1.value.location.y))
 		}
 
-		let row = (0...size.x).map { _ in "     " }
+		let row = (0...size.x).map { _ in " " }
 		var matrix = (0...size.y).map { _ in row }
 
-		for (id, room) in rooms {
+		for (_, room) in rooms {
 			let location = room.location
-			var char = room.unknownConnections.isEmpty ? "\(id)" : "\(id)?"
+			var char = room.unknownConnections.isEmpty ? "+" : "?"
 			char = room.id == 0 ? "O" : char
 			char = room.id == 1 ? "S" : char
+			char = room.id == 55 ? "W" : char
+			char = room.terrain == "TRAP" ? "!" : char
 
-			while char.count < 5 {
-				char = " \(char) "
-			}
-			while char.count > 5 {
-				char.removeLast()
-			}
+//			while char.count < 5 {
+//				char = " \(char) "
+//			}
+//			while char.count > 5 {
+//				char.removeLast()
+//			}
 
 			matrix[location.y][location.x] = char
 		}
@@ -322,6 +792,9 @@ class RoomController {
 		let strings = flipped.map { $0.joined(separator: "") }
 
 		for row in strings {
+			guard row.contains(where: { character -> Bool in
+				character != " "
+			}) else { continue }
 			print(row)
 		}
 	}
@@ -345,7 +818,26 @@ class RoomController {
 	}
 
 	private func dateFromCooldownValue(_ cooldown: TimeInterval) -> Date {
-		Date(timeIntervalSinceNow: cooldown)
+		Date(timeIntervalSinceNow: cooldown + 0.01)
+	}
+
+	private func cooldownFromError(_ error: Error) -> Date {
+		guard let error = error as? NetworkError else { return Date() }
+
+		let returnedData: Data?
+		switch error {
+		case .badData(sourceData: let data):
+			returnedData = data
+		case .dataCodingError(specifically: _, sourceData: let data):
+			returnedData = data
+		case .httpNon200StatusCode(code: _, data: let data):
+			returnedData = data
+		default:
+			return Date()
+		}
+
+		guard let data = returnedData, let genericResponse = try? JSONDecoder().decode(BasicResponse.self, from: data) else { return Date() }
+		return dateFromCooldownValue(genericResponse.cooldown)
 	}
 
 	// MARK: - Persistence
@@ -388,6 +880,11 @@ class RoomController {
 		let plistData = try PropertyListEncoder().encode(rooms)
 		let jsonEnc = JSONEncoder()
 		jsonEnc.keyEncodingStrategy = .convertToSnakeCase
+		if #available(OSX 10.13, *) {
+			jsonEnc.outputFormatting = [.prettyPrinted, .sortedKeys]
+		} else {
+			jsonEnc.outputFormatting = [.prettyPrinted]
+		}
 		let jsonData = try jsonEnc.encode(rooms)
 
 		try plistOut.write(plistData)
