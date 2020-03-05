@@ -17,6 +17,13 @@ public class MUDCrawler {
 		}
 	}
 
+	public func startSnitchMine() {
+		while true {
+			roomController.initPlayer()
+			roomController.snitchMining()
+		}
+	}
+
 	// MARK: - Game Loop
 	public func gameLoop() {
 		let command = promptPlayerInput()
@@ -37,16 +44,25 @@ public class MUDCrawler {
 		}
 		else if directions.contains(command) {
 			guard let direction = Direction(rawValue: command) else { return }
-			roomController.move(in: direction)
-		}
-		else if command == "test" {
-			roomController.testQueue()
+			roomController.fly(in: direction)
 		}
 		else if command.hasPrefix("go ") {
 			gotoRoom(command: command)
 		}
 		else if command == "draw" {
 			roomController.drawMap()
+		}
+		else if command == "treasurehunt" {
+			roomController.treasureHunt()
+		}
+		else if command == "automine" {
+			roomController.autoMine()
+		}
+		else if command == "snitchmine" {
+			roomController.snitchMining()
+		}
+		else if command == "wander" {
+			roomController.wanderInDarkWorld()
 		}
 		else if command.hasPrefix("take") {
 			takeItem(command: command)
@@ -57,14 +73,23 @@ public class MUDCrawler {
 		else if command.hasPrefix("examine") {
 			examine(command: command)
 		}
+		else if command == "gather" {
+			roomController.gatherTreasure()
+		}
+		else if command.hasPrefix("buydonut") {
+			roomController.buyDonut()
+		}
+		else if command.hasPrefix("sellall") {
+			roomController.sellAllItems()
+		}
 		else if command.hasPrefix("sell") {
 			sellItem(command: command)
 		}
 		else if command == "status" {
-			roomController.playerStatus()
+			roomController.getPlayerStatus()
 		}
-		else if command.hasPrefix("fly") {
-			fly(command: command)
+		else if command.hasPrefix("move") {
+			move(command: command)
 		}
 		else if command.hasPrefix("equip") {
 			equip(command: command)
@@ -144,15 +169,8 @@ public class MUDCrawler {
 	}
 
 	func sellItem(command: String) {
-		var item = command.replacingOccurrences(of: "^sell ", with: "", options: .regularExpression, range: nil)
-		let confirm: Bool
-		if command.hasSuffix(" y") {
-			confirm = true
-			item = item.replacingOccurrences(of: " y$", with: "", options: .regularExpression, range: nil)
-		} else {
-			confirm = false
-		}
-		roomController.sell(item: item, confirm: confirm)
+		let item = command.replacingOccurrences(of: "^sell ", with: "", options: .regularExpression, range: nil)
+		roomController.sell(item: item, confirm: true)
 	}
 
 	func examine(command: String) {
@@ -182,27 +200,38 @@ public class MUDCrawler {
 		roomController.unequip(item: gear)
 	}
 
-	func fly(command: String) {
-		let directionRaw = command.replacingOccurrences(of: "^fly ", with: "", options: .regularExpression, range: nil)
+	func move(command: String) {
+		let directionRaw = command.replacingOccurrences(of: "^move ", with: "", options: .regularExpression, range: nil)
 		guard let direction = Direction(rawValue: directionRaw) else { return }
 
-		roomController.fly(in: direction)
+		roomController.move(in: direction)
 	}
 
 	func distance(command: String) {
 		let roomIDStr = command.replacingOccurrences(of: "^dist ", with: "", options: .regularExpression, range: nil)
-		guard let currentRoom = roomController.currentRoom else {
-			print("No current room")
-			return
-		}
-		guard let roomID = Int(roomIDStr), let path = try? roomController.shortestRoute(from: currentRoom, to: roomID) else {
+		let rooms = roomIDStr.split(separator: " ").compactMap { Int($0) }
+		let startRoom: Int
+		let endRoom: Int
+
+		if rooms.count == 1 {
+			guard let currentRoom = roomController.currentRoom else {
+				print("No current room")
+				return
+			}
+			startRoom = currentRoom
+			endRoom = rooms[0]
+		} else if rooms.count == 2 {
+			startRoom = rooms[0]
+			endRoom = rooms[1]
+		} else {
 			print("Path or room doesn't exist")
 			return
 		}
-		let rooms = path.map { $0.roomID }.map { String($0) }.joined(separator: " -> ")
-		let directions = path.compactMap { $0.direction.rawValue.first }.map { String($0) }.joined(separator: ", ")
-		print(rooms)
-		print(directions)
+		let oldPath = try! roomController.shortestRoute(from: startRoom, to: endRoom)
+		let oldRooms = oldPath.map { $0.roomID }.map { String($0) }.joined(separator: " -> ")
+		print(oldRooms)
+		let newPath = try! roomController.shortestRoutes(from: startRoom, to: endRoom)
+		print(newPath)
 	}
 
 	func ghostGive(command: String) {

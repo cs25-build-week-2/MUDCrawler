@@ -10,4 +10,11 @@ import MUDCrawlerCore
 
 let crawler = MUDCrawler()
 
-crawler.start()
+
+//CoinMiner.benchMark()
+
+if CommandLine.arguments.contains("snitchmine") {
+	crawler.startSnitchMine()
+} else {
+	crawler.start()
+}
